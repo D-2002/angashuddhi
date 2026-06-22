@@ -116,18 +116,24 @@ export default function PoseAnalyzer() {
 
     // ── Feature extraction & scoring (Day 2 addition) ──────────────────────
     if (results.landmarks.length > 0) {
-      const features = extractAramandiFeatures(
-        results.landmarks[0] as Landmark[],
-        vw,
-        vh,
-      );
-      // Throttle React state updates to ~10 fps so the UI stays smooth
-      const now = performance.now();
-      if (now - scoreUpdateRef.current > 100) {
-        setScores(scoreAramandiFeatures(features));
-        scoreUpdateRef.current = now;
-      }
-    } else {
+      const lm = results.landmarks[0] as Landmark[];
+
+  // Only compute if the 6 key lower-body landmarks are actually visible
+      const KEY_LOWER = [23, 24, 25, 26, 27, 28]; // hips, knees, ankles
+      const lowerVisible = KEY_LOWER.every(i => (lm[i].visibility ?? 0) > 0.6);
+
+  if (lowerVisible) {
+    const features = extractAramandiFeatures(lm, vw, vh);
+    const now = performance.now();
+    if (now - scoreUpdateRef.current > 100) {
+      setScores(scoreAramandiFeatures(features));
+      scoreUpdateRef.current = now;
+    }
+  } else {
+    // Clear scores — don't show metrics for invisible landmarks
+    setScores({});
+  }
+} else {
       // Clear scores when no pose detected
       if (Object.keys(scores).length > 0) setScores({});
     }
@@ -142,6 +148,7 @@ export default function PoseAnalyzer() {
 
     setPoseCount(results.landmarks.length);
     rafRef.current = requestAnimationFrame(runDetectionLoop);
+
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

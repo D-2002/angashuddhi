@@ -165,14 +165,29 @@ export function extractAramandiFeatures(
     : 0;
 
   // ── 3. Torso lean from vertical ───────────────────────────────────────────
-  const sMidPx = toPx(shoulderMid, w, h);
-  const hMidPx = toPx(hipMid, w, h);
-  const torsoVec = { x: hMidPx.x - sMidPx.x, y: hMidPx.y - sMidPx.y };
-  const torsoMag = Math.sqrt(torsoVec.x ** 2 + torsoVec.y ** 2);
-  // Dot product with (0,1) = vertical downward direction
-  const torsoLeanAngle = torsoMag > 1
-    ? (Math.acos(Math.max(-1, Math.min(1, torsoVec.y / torsoMag))) * 180) / Math.PI
-    : 0;
+  // ── 3. Torso lean ─────────────────────────────────────────────────────────
+// Two components:
+// (a) Lateral lean: detectable reliably in X,Y from frontal camera
+// (b) Forward lean: requires Z depth — noisier but useful as a signal
+
+const sMidPx = toPx(shoulderMid, w, h);
+const hMidPx = toPx(hipMid, w, h);
+const torsoVec = { x: hMidPx.x - sMidPx.x, y: hMidPx.y - sMidPx.y };
+const torsoMag = Math.sqrt(torsoVec.x ** 2 + torsoVec.y ** 2);
+
+// Lateral lean: horizontal deviation of shoulder from being directly above hip
+const lateralLeanAngle = torsoMag > 1
+  ? (Math.acos(Math.max(-1, Math.min(1, torsoVec.y / torsoMag))) * 180) / Math.PI
+  : 0;
+
+// Forward lean: MediaPipe z = depth relative to hip midpoint
+// More negative z on shoulder = shoulder is closer to camera = leaning forward
+// This is noisy but directionally correct
+const shoulderZRelative = shoulderMid.z; // negative = shoulder closer to camera
+const forwardLeanProxy = Math.max(0, -shoulderZRelative * 100); // scale to ~0-30 range
+
+// Combined: use whichever is larger as the dominant signal
+const torsoLeanAngle = Math.max(lateralLeanAngle, forwardLeanProxy);
 
   // ── 4. Knee lateral deviation (FPPA proxy) ────────────────────────────────
   // Each knee is compared to the midpoint of its hip and ankle x-positions.
@@ -251,15 +266,15 @@ export function scoreAramandiFeatures(
     torsoLean: {
       rawValue: f.torsoLeanAngle,
       displayValue: `${fmt(f.torsoLeanAngle)}°`,
-      label: 'Torso Lean',
+      label: 'Torso Lean (lateral + depth)',
       status:
         f.torsoLeanAngle < 10 ? 'good'
         : f.torsoLeanAngle < 22 ? 'warn'
         : 'error',
-      feedback:
-        f.torsoLeanAngle < 10 ? 'Back is upright'
-        : f.torsoLeanAngle < 22 ? 'Slight forward lean — lift your chest'
-        : 'You are leaning forward — keep your spine vertical',
+  feedback:
+    f.torsoLeanAngle < 10 ? 'Back is upright'
+    : f.torsoLeanAngle < 22 ? 'Lean detected — lift chest, engage core'
+    : 'Significant lean — keep spine vertical',
     },
 
     kneeTracking: {
