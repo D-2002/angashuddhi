@@ -2,47 +2,68 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { PoseLandmarker, FilesetResolver, DrawingUtils } from '@mediapipe/tasks-vision';
+import {
+  extractAramandiFeatures,
+  scoreAramandiFeatures,
+  type MetricScore,
+  type Landmark,
+} from '@/lib/features';
 
-// Pin WASM version to match npm package
-const WASM_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/wasm';
-const MODEL_URL =
+const WASM_URL   = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/wasm';
+const MODEL_URL  =
   'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task';
 
-// MediaPipe 33-landmark indices — reference for Day 2 feature extraction
-// 0=nose, 11=L.shoulder, 12=R.shoulder, 13=L.elbow, 14=R.elbow
-// 23=L.hip, 24=R.hip, 25=L.knee, 26=R.knee
-// 27=L.ankle, 28=R.ankle, 29=L.heel, 30=R.heel
-// 31=L.foot-index, 32=R.foot-index
+// Status colour helpers
+const statusBorder: Record<string, string> = {
+  good:  'border-green-700',
+  warn:  'border-amber-700',
+  error: 'border-red-700',
+};
+const statusBg: Record<string, string> = {
+  good:  'bg-green-950/60',
+  warn:  'bg-amber-950/60',
+  error: 'bg-red-950/60',
+};
+const statusText: Record<string, string> = {
+  good:  'text-green-400',
+  warn:  'text-amber-400',
+  error: 'text-red-400',
+};
+const statusIcon: Record<string, string> = {
+  good: '✓',
+  warn: '⚠',
+  error: '✗',
+};
 
 export default function PoseAnalyzer() {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const landmarkerRef = useRef<PoseLandmarker | null>(null);
-  const rafRef = useRef<number>(0);
-  const lastTimeRef = useRef<number>(-1);
-  const streamRef = useRef<MediaStream | null>(null);
+  const videoRef        = useRef<HTMLVideoElement>(null);
+  const canvasRef       = useRef<HTMLCanvasElement>(null);
+  const landmarkerRef   = useRef<PoseLandmarker | null>(null);
+  const rafRef          = useRef<number>(0);
+  const lastTimeRef     = useRef<number>(-1);
+  const streamRef       = useRef<MediaStream | null>(null);
+  const scoreUpdateRef  = useRef<number>(0);   // throttle UI updates to ~10 fps
 
   const [modelStatus, setModelStatus] = useState<'loading' | 'ready' | 'error'>('loading');
-  const [hasSource, setHasSource] = useState(false);
-  const [poseCount, setPoseCount] = useState(0);
-  const [fps, setFps] = useState(0);
-  const fpsCounterRef = useRef<{ frames: number; last: number }>({ frames: 0, last: performance.now() });
+  const [hasSource,   setHasSource]   = useState(false);
+  const [poseCount,   setPoseCount]   = useState(0);
+  const [fps,         setFps]         = useState(0);
+  const [scores,      setScores]      = useState<Record<string, MetricScore>>({});
 
-  // ─── Init MediaPipe (runs once on mount) ─────────────────────────────────
+  const fpsRef = useRef<{ frames: number; last: number }>({ frames: 0, last: performance.now() });
+
+  // ─── Init MediaPipe ────────────────────────────────────────────────────────
   useEffect(() => {
     (async () => {
       try {
         const vision = await FilesetResolver.forVisionTasks(WASM_URL);
         landmarkerRef.current = await PoseLandmarker.createFromOptions(vision, {
-          baseOptions: {
-            modelAssetPath: MODEL_URL,
-            delegate: 'GPU', // falls back to CPU automatically if GPU unavailable
-          },
+          baseOptions: { modelAssetPath: MODEL_URL, delegate: 'GPU' },
           runningMode: 'VIDEO',
           numPoses: 1,
           minPoseDetectionConfidence: 0.5,
-          minPosePresenceConfidence: 0.5,
-          minTrackingConfidence: 0.5,
+          minPosePresenceConfidence:  0.5,
+          minTrackingConfidence:      0.5,
         });
         setModelStatus('ready');
       } catch (err) {
@@ -50,96 +71,85 @@ export default function PoseAnalyzer() {
         setModelStatus('error');
       }
     })();
-
     return () => {
       cancelAnimationFrame(rafRef.current);
       streamRef.current?.getTracks().forEach((t) => t.stop());
     };
   }, []);
 
-  // ─── Core detection loop ──────────────────────────────────────────────────
+  // ─── Detection loop ────────────────────────────────────────────────────────
   const runDetectionLoop = useCallback(() => {
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
+    const video     = videoRef.current;
+    const canvas    = canvasRef.current;
     const landmarker = landmarkerRef.current;
     if (!video || !canvas || !landmarker) return;
-    if (video.paused || video.ended) return;
+    if (video.paused || video.ended)       return;
 
-    // Skip if video frame hasn't changed (avoids duplicate inference)
     if (video.currentTime === lastTimeRef.current) {
       rafRef.current = requestAnimationFrame(runDetectionLoop);
       return;
     }
     lastTimeRef.current = video.currentTime;
 
-    // Always sync canvas to video's natural resolution
-    const vw = video.videoWidth || 640;
+    const vw = video.videoWidth  || 640;
     const vh = video.videoHeight || 480;
     if (canvas.width !== vw || canvas.height !== vh) {
-      canvas.width = vw;
+      canvas.width  = vw;
       canvas.height = vh;
     }
 
     const ctx = canvas.getContext('2d')!;
-
-    // Draw video frame — canvas is the display surface, video element stays hidden
     ctx.drawImage(video, 0, 0, vw, vh);
 
-    // Run MediaPipe inference
     const results = landmarker.detectForVideo(video, performance.now());
 
-    // Draw skeleton overlay
+    // Draw skeleton
     const drawingUtils = new DrawingUtils(ctx);
     for (const landmarks of results.landmarks) {
       drawingUtils.drawConnectors(landmarks, PoseLandmarker.POSE_CONNECTIONS, {
-        color: '#00FF9A',
-        lineWidth: 2,
+        color: '#00FF9A', lineWidth: 2,
       });
       drawingUtils.drawLandmarks(landmarks, {
-        color: '#FF6B6B',
-        fillColor: '#FF6B6B',
-        lineWidth: 1,
-        radius: 4,
+        color: '#FF6B6B', fillColor: '#FF6B6B', lineWidth: 1, radius: 4,
       });
     }
 
-    // ── Day 2 prep: log Aramandi-relevant landmarks ──
-    // Comment this out once you're extracting features properly
+    // ── Feature extraction & scoring (Day 2 addition) ──────────────────────
     if (results.landmarks.length > 0) {
-      const lm = results.landmarks[0];
-      // Normalized [0,1] coords relative to image. z = depth relative to hip midpoint.
-      console.log('[AngaShuddhi] Aramandi landmarks:', {
-        leftHip:    { x: +lm[23].x.toFixed(3), y: +lm[23].y.toFixed(3), z: +lm[23].z.toFixed(3) },
-        rightHip:   { x: +lm[24].x.toFixed(3), y: +lm[24].y.toFixed(3), z: +lm[24].z.toFixed(3) },
-        leftKnee:   { x: +lm[25].x.toFixed(3), y: +lm[25].y.toFixed(3), z: +lm[25].z.toFixed(3) },
-        rightKnee:  { x: +lm[26].x.toFixed(3), y: +lm[26].y.toFixed(3), z: +lm[26].z.toFixed(3) },
-        leftAnkle:  { x: +lm[27].x.toFixed(3), y: +lm[27].y.toFixed(3) },
-        rightAnkle: { x: +lm[28].x.toFixed(3), y: +lm[28].y.toFixed(3) },
-        leftHeel:   { x: +lm[29].x.toFixed(3), y: +lm[29].y.toFixed(3) },
-        rightHeel:  { x: +lm[30].x.toFixed(3), y: +lm[30].y.toFixed(3) },
-        leftFoot:   { x: +lm[31].x.toFixed(3), y: +lm[31].y.toFixed(3) },
-        rightFoot:  { x: +lm[32].x.toFixed(3), y: +lm[32].y.toFixed(3) },
-      });
+      const features = extractAramandiFeatures(
+        results.landmarks[0] as Landmark[],
+        vw,
+        vh,
+      );
+      // Throttle React state updates to ~10 fps so the UI stays smooth
+      const now = performance.now();
+      if (now - scoreUpdateRef.current > 100) {
+        setScores(scoreAramandiFeatures(features));
+        scoreUpdateRef.current = now;
+      }
+    } else {
+      // Clear scores when no pose detected
+      if (Object.keys(scores).length > 0) setScores({});
     }
 
     // FPS counter
     const now = performance.now();
-    fpsCounterRef.current.frames++;
-    if (now - fpsCounterRef.current.last >= 1000) {
-      setFps(fpsCounterRef.current.frames);
-      fpsCounterRef.current = { frames: 0, last: now };
+    fpsRef.current.frames++;
+    if (now - fpsRef.current.last >= 1000) {
+      setFps(fpsRef.current.frames);
+      fpsRef.current = { frames: 0, last: now };
     }
 
     setPoseCount(results.landmarks.length);
     rafRef.current = requestAnimationFrame(runDetectionLoop);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ─── Source: video file ───────────────────────────────────────────────────
+  // ─── Source: video file ────────────────────────────────────────────────────
   const handleVideoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     stopSource();
-
     const video = videoRef.current!;
     video.srcObject = null;
     video.src = URL.createObjectURL(file);
@@ -150,7 +160,7 @@ export default function PoseAnalyzer() {
     };
   };
 
-  // ─── Source: webcam ───────────────────────────────────────────────────────
+  // ─── Source: webcam ────────────────────────────────────────────────────────
   const handleWebcam = async () => {
     stopSource();
     try {
@@ -167,8 +177,8 @@ export default function PoseAnalyzer() {
         rafRef.current = requestAnimationFrame(runDetectionLoop);
       };
     } catch (err) {
-      console.error('[AngaShuddhi] Webcam access denied:', err);
-      alert('Could not access webcam. Check browser permissions.');
+      console.error('[AngaShuddhi] Webcam denied:', err);
+      alert('Could not access webcam — check browser permissions.');
     }
   };
 
@@ -180,24 +190,23 @@ export default function PoseAnalyzer() {
     setHasSource(false);
     setPoseCount(0);
     setFps(0);
-
-    // Clear canvas
+    setScores({});
     const canvas = canvasRef.current;
-    if (canvas) {
-      const ctx = canvas.getContext('2d');
-      ctx?.clearRect(0, 0, canvas.width, canvas.height);
-    }
+    if (canvas) canvas.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height);
   };
 
-  // ─── Render ───────────────────────────────────────────────────────────────
+  const hasScores = Object.keys(scores).length > 0;
+
+  // ─── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-gray-950 text-white flex flex-col items-center p-6">
       <div className="w-full max-w-3xl">
 
         {/* Header */}
-        <div className="mb-8">
+        <div className="mb-6">
           <h1 className="text-2xl font-medium tracking-tight">
-            AngaShuddhi <span className="text-gray-500 font-normal">अंगशुद्धि</span>
+            AngaShuddhi{' '}
+            <span className="text-gray-500 font-normal">अंगशुद्धि</span>
           </h1>
           <p className="text-gray-400 text-sm mt-1">
             Bringing computational precision to classical dance training
@@ -205,9 +214,9 @@ export default function PoseAnalyzer() {
         </div>
 
         {/* Status bar */}
-        <div className="flex items-center gap-4 mb-6 text-sm">
+        <div className="flex items-center gap-4 mb-5 text-sm flex-wrap">
           {modelStatus === 'loading' && (
-            <span className="text-amber-400 animate-pulse">⏳ Loading MediaPipe model (~10 MB)…</span>
+            <span className="text-amber-400 animate-pulse">⏳ Loading model…</span>
           )}
           {modelStatus === 'ready' && (
             <span className="text-green-400">✓ Model ready</span>
@@ -226,12 +235,12 @@ export default function PoseAnalyzer() {
         </div>
 
         {/* Controls */}
-        <div className="flex flex-wrap gap-3 mb-6">
+        <div className="flex flex-wrap gap-3 mb-5">
           <label
             className={`inline-flex items-center px-4 py-2 rounded-lg text-sm font-medium transition cursor-pointer ${
               modelStatus === 'ready'
                 ? 'bg-indigo-600 hover:bg-indigo-500'
-                : 'bg-gray-700 opacity-40 cursor-not-allowed pointer-events-none'
+                : 'bg-gray-700 opacity-40 pointer-events-none'
             }`}
           >
             Upload video
@@ -266,7 +275,7 @@ export default function PoseAnalyzer() {
           )}
         </div>
 
-        {/* Canvas — this IS the display surface, video element stays hidden */}
+        {/* Video canvas */}
         <div className="w-full bg-gray-900 rounded-xl overflow-hidden relative min-h-48">
           <video ref={videoRef} className="hidden" playsInline muted loop />
           <canvas ref={canvasRef} className="w-full h-auto block" />
@@ -277,13 +286,70 @@ export default function PoseAnalyzer() {
           )}
         </div>
 
-        {/* Landmark reference — you'll use this heavily on Day 2 */}
-        <div className="mt-6 p-4 bg-gray-900 rounded-xl">
-          <p className="text-xs font-medium text-gray-300 mb-3">
-            MediaPipe landmark indices (open DevTools → Console to see live values)
-          </p>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-y-1 text-xs text-gray-400 font-mono">
-            <span>0 → nose</span>
+        {/* ── Metrics panel (Day 2) ─────────────────────────────────────────── */}
+        {hasSource && (
+          <div className="mt-5">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-medium text-gray-300">
+                Aramandi Analysis
+              </h2>
+              {!hasScores && poseCount === 0 && (
+                <span className="text-xs text-gray-500">
+                  Stand in frame to see metrics
+                </span>
+              )}
+            </div>
+
+            {hasScores ? (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                {Object.entries(scores).map(([key, metric]) => (
+                  <div
+                    key={key}
+                    className={`p-3 rounded-xl border ${statusBorder[metric.status]} ${statusBg[metric.status]}`}
+                  >
+                    {/* Label + icon */}
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-xs text-gray-400 leading-tight">
+                        {metric.label}
+                      </span>
+                      <span className={`text-xs font-bold ${statusText[metric.status]}`}>
+                        {statusIcon[metric.status]}
+                      </span>
+                    </div>
+
+                    {/* Value */}
+                    <div className="text-base font-mono font-semibold text-white mb-1.5">
+                      {metric.displayValue}
+                    </div>
+
+                    {/* Feedback */}
+                    <div className={`text-xs leading-tight ${statusText[metric.status]}`}>
+                      {metric.feedback}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              // Skeleton placeholder cards while pose not yet detected
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                {Array.from({ length: 7 }).map((_, i) => (
+                  <div
+                    key={i}
+                    className="p-3 rounded-xl border border-gray-800 bg-gray-900/50 animate-pulse h-24"
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Landmark index reference (collapsed after Day 1 — keep for your reference) */}
+        <details className="mt-6">
+          <summary className="text-xs text-gray-600 cursor-pointer hover:text-gray-400 transition">
+            Landmark index reference
+          </summary>
+          <div className="mt-2 p-4 bg-gray-900 rounded-xl grid grid-cols-2 sm:grid-cols-3 gap-y-1 text-xs text-gray-500 font-mono">
+            <span>0  → nose</span>
             <span>11, 12 → shoulders</span>
             <span>13, 14 → elbows</span>
             <span>23, 24 → hips</span>
@@ -292,10 +358,7 @@ export default function PoseAnalyzer() {
             <span>29, 30 → heels</span>
             <span>31, 32 → foot index</span>
           </div>
-          <p className="text-xs text-gray-500 mt-3">
-            Coordinates are normalized [0,1]. x increases right, y increases down, z = depth (relative to hip midpoint).
-          </p>
-        </div>
+        </details>
 
       </div>
     </div>
