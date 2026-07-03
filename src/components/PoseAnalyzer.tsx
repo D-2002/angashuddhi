@@ -9,11 +9,10 @@ import {
   type Landmark,
 } from '@/lib/features';
 
-const WASM_URL   = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/wasm';
-const MODEL_URL  =
+const WASM_URL  = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/wasm';
+const MODEL_URL =
   'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task';
 
-// Status colour helpers
 const statusBorder: Record<string, string> = {
   good:  'border-green-700',
   warn:  'border-amber-700',
@@ -36,13 +35,13 @@ const statusIcon: Record<string, string> = {
 };
 
 export default function PoseAnalyzer() {
-  const videoRef        = useRef<HTMLVideoElement>(null);
-  const canvasRef       = useRef<HTMLCanvasElement>(null);
-  const landmarkerRef   = useRef<PoseLandmarker | null>(null);
-  const rafRef          = useRef<number>(0);
-  const lastTimeRef     = useRef<number>(-1);
-  const streamRef       = useRef<MediaStream | null>(null);
-  const scoreUpdateRef  = useRef<number>(0);   // throttle UI updates to ~10 fps
+  const videoRef       = useRef<HTMLVideoElement>(null);
+  const canvasRef      = useRef<HTMLCanvasElement>(null);
+  const landmarkerRef  = useRef<PoseLandmarker | null>(null);
+  const rafRef         = useRef<number>(0);
+  const lastTimeRef    = useRef<number>(-1);
+  const streamRef      = useRef<MediaStream | null>(null);
+  const scoreUpdateRef = useRef<number>(0);
 
   const [modelStatus, setModelStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [hasSource,   setHasSource]   = useState(false);
@@ -52,7 +51,7 @@ export default function PoseAnalyzer() {
 
   const fpsRef = useRef<{ frames: number; last: number }>({ frames: 0, last: performance.now() });
 
-  // ─── Init MediaPipe ────────────────────────────────────────────────────────
+  // ── Init MediaPipe ─────────────────────────────────────────────────────────
   useEffect(() => {
     (async () => {
       try {
@@ -77,13 +76,13 @@ export default function PoseAnalyzer() {
     };
   }, []);
 
-  // ─── Detection loop ────────────────────────────────────────────────────────
+  // ── Detection loop ─────────────────────────────────────────────────────────
   const runDetectionLoop = useCallback(() => {
-    const video     = videoRef.current;
-    const canvas    = canvasRef.current;
+    const video      = videoRef.current;
+    const canvas     = canvasRef.current;
     const landmarker = landmarkerRef.current;
     if (!video || !canvas || !landmarker) return;
-    if (video.paused || video.ended)       return;
+    if (video.paused || video.ended) return;
 
     if (video.currentTime === lastTimeRef.current) {
       rafRef.current = requestAnimationFrame(runDetectionLoop);
@@ -114,31 +113,74 @@ export default function PoseAnalyzer() {
       });
     }
 
-    // ── Feature extraction & scoring (Day 2 addition) ──────────────────────
     if (results.landmarks.length > 0) {
       const lm = results.landmarks[0] as Landmark[];
 
-  // Only compute if the 6 key lower-body landmarks are actually visible
-      const KEY_LOWER = [23, 24, 25, 26, 27, 28]; // hips, knees, ankles
-      const lowerVisible = KEY_LOWER.every(i => (lm[i].visibility ?? 0) > 0.6);
+      // ── DIAGNOSTIC: log actual visibility scores every 2 seconds ──────────
+      // Read these in DevTools → Console while standing in Aramandi
+      // We use this to set the real threshold — remove after calibration
+      const KEY_LOWER = [23, 24, 25, 26, 27, 28];
+      const now0 = performance.now();
+      if (now0 - scoreUpdateRef.current > 2000) {
+        console.log('[AngaShuddhi] Lower body visibility scores:',
+          KEY_LOWER.map(i => ({
+            landmark: ['L.Hip','R.Hip','L.Knee','R.Knee','L.Ankle','R.Ankle'][KEY_LOWER.indexOf(i)],
+            id: i,
+            visibility: lm[i].visibility?.toFixed(3) ?? 'undefined',
+          }))
+        );
+      }
 
-  if (lowerVisible) {
-    const features = extractAramandiFeatures(lm, vw, vh);
-    const now = performance.now();
-    if (now - scoreUpdateRef.current > 100) {
-      setScores(scoreAramandiFeatures(features));
-      scoreUpdateRef.current = now;
-    }
-  } else {
-    // Clear scores — don't show metrics for invisible landmarks
-    setScores({});
-  }
-} else {
-      // Clear scores when no pose detected
-      if (Object.keys(scores).length > 0) setScores({});
+      // ── Visibility filter — TEMPORARILY set to 0.3 so cards still show ───
+      // We will tighten this once we read your real values above
+      const VISIBILITY_THRESHOLD = 0.3;
+      const lowerVisible = KEY_LOWER.every(
+        i => (lm[i].visibility ?? 0) > VISIBILITY_THRESHOLD
+      );
+
+      if (lowerVisible) {
+        const features = extractAramandiFeatures(lm, vw, vh);
+
+        // ── DIAGNOSTIC: log raw feature values in Aramandi ────────────────
+        // Stand in full Aramandi and read these numbers
+        // We use this to calibrate thresholds in features.ts
+        const now1 = performance.now();
+        if (now1 - scoreUpdateRef.current > 2000) {
+          console.table({
+            sittingDepthRatio:   +features.sittingDepthRatio.toFixed(3),
+            avgKneeAngle:        +features.avgKneeAngle.toFixed(1),
+            leftKneeAngle:       +features.leftKneeAngle.toFixed(1),
+            rightKneeAngle:      +features.rightKneeAngle.toFixed(1),
+            torsoLeanAngle:      +features.torsoLeanAngle.toFixed(1),
+            leftKneeDeviation:   +features.leftKneeDeviation.toFixed(3),
+            rightKneeDeviation:  +features.rightKneeDeviation.toFixed(3),
+            kneeBendDelta:       +features.kneeBendDelta.toFixed(1),
+            hipLevelDelta:       +features.hipLevelDelta.toFixed(3),
+            comLateralOffset:    +features.comLateralOffset.toFixed(3),
+          });
+          scoreUpdateRef.current = now1;
+        }
+
+        const now2 = performance.now();
+        if (now2 - scoreUpdateRef.current > 100) {
+          setScores(scoreAramandiFeatures(features));
+          scoreUpdateRef.current = now2;
+        }
+
+      } else {
+        // Log which landmarks failed so we know what's being blocked
+        console.log('[AngaShuddhi] Visibility check failed for:',
+          KEY_LOWER
+            .filter(i => (lm[i].visibility ?? 0) <= VISIBILITY_THRESHOLD)
+            .map(i => ['L.Hip','R.Hip','L.Knee','R.Knee','L.Ankle','R.Ankle'][KEY_LOWER.indexOf(i)])
+        );
+        setScores({});
+      }
+    } else {
+      setScores({});
     }
 
-    // FPS counter
+    // FPS
     const now = performance.now();
     fpsRef.current.frames++;
     if (now - fpsRef.current.last >= 1000) {
@@ -148,11 +190,10 @@ export default function PoseAnalyzer() {
 
     setPoseCount(results.landmarks.length);
     rafRef.current = requestAnimationFrame(runDetectionLoop);
-
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ─── Source: video file ────────────────────────────────────────────────────
+  // ── Source handlers ────────────────────────────────────────────────────────
   const handleVideoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -167,7 +208,6 @@ export default function PoseAnalyzer() {
     };
   };
 
-  // ─── Source: webcam ────────────────────────────────────────────────────────
   const handleWebcam = async () => {
     stopSource();
     try {
@@ -204,12 +244,11 @@ export default function PoseAnalyzer() {
 
   const hasScores = Object.keys(scores).length > 0;
 
-  // ─── Render ────────────────────────────────────────────────────────────────
+  // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-gray-950 text-white flex flex-col items-center p-6">
       <div className="w-full max-w-3xl">
 
-        {/* Header */}
         <div className="mb-6">
           <h1 className="text-2xl font-medium tracking-tight">
             AngaShuddhi{' '}
@@ -220,7 +259,6 @@ export default function PoseAnalyzer() {
           </p>
         </div>
 
-        {/* Status bar */}
         <div className="flex items-center gap-4 mb-5 text-sm flex-wrap">
           {modelStatus === 'loading' && (
             <span className="text-amber-400 animate-pulse">⏳ Loading model…</span>
@@ -241,7 +279,6 @@ export default function PoseAnalyzer() {
           )}
         </div>
 
-        {/* Controls */}
         <div className="flex flex-wrap gap-3 mb-5">
           <label
             className={`inline-flex items-center px-4 py-2 rounded-lg text-sm font-medium transition cursor-pointer ${
@@ -282,7 +319,6 @@ export default function PoseAnalyzer() {
           )}
         </div>
 
-        {/* Video canvas */}
         <div className="w-full bg-gray-900 rounded-xl overflow-hidden relative min-h-48">
           <video ref={videoRef} className="hidden" playsInline muted loop />
           <canvas ref={canvasRef} className="w-full h-auto block" />
@@ -293,7 +329,6 @@ export default function PoseAnalyzer() {
           )}
         </div>
 
-        {/* ── Metrics panel (Day 2) ─────────────────────────────────────────── */}
         {hasSource && (
           <div className="mt-5">
             <div className="flex items-center justify-between mb-3">
@@ -302,7 +337,12 @@ export default function PoseAnalyzer() {
               </h2>
               {!hasScores && poseCount === 0 && (
                 <span className="text-xs text-gray-500">
-                  Stand in frame to see metrics
+                  Stand in frame — ensure full body is visible
+                </span>
+              )}
+              {!hasScores && poseCount > 0 && (
+                <span className="text-xs text-amber-500">
+                  Pose detected but visibility too low — check console
                 </span>
               )}
             </div>
@@ -314,7 +354,6 @@ export default function PoseAnalyzer() {
                     key={key}
                     className={`p-3 rounded-xl border ${statusBorder[metric.status]} ${statusBg[metric.status]}`}
                   >
-                    {/* Label + icon */}
                     <div className="flex items-center justify-between mb-1.5">
                       <span className="text-xs text-gray-400 leading-tight">
                         {metric.label}
@@ -323,13 +362,9 @@ export default function PoseAnalyzer() {
                         {statusIcon[metric.status]}
                       </span>
                     </div>
-
-                    {/* Value */}
                     <div className="text-base font-mono font-semibold text-white mb-1.5">
                       {metric.displayValue}
                     </div>
-
-                    {/* Feedback */}
                     <div className={`text-xs leading-tight ${statusText[metric.status]}`}>
                       {metric.feedback}
                     </div>
@@ -337,7 +372,6 @@ export default function PoseAnalyzer() {
                 ))}
               </div>
             ) : (
-              // Skeleton placeholder cards while pose not yet detected
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                 {Array.from({ length: 7 }).map((_, i) => (
                   <div
@@ -350,7 +384,6 @@ export default function PoseAnalyzer() {
           </div>
         )}
 
-        {/* Landmark index reference (collapsed after Day 1 — keep for your reference) */}
         <details className="mt-6">
           <summary className="text-xs text-gray-600 cursor-pointer hover:text-gray-400 transition">
             Landmark index reference
