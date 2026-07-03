@@ -265,24 +265,24 @@ export function scoreAramandiFeatures(
     // ── Knee Tracking (Bharatanatyam-specific) ────────────────────────────
     // Positive = knee wider than hip (correct). Negative = knee collapsing inward.
     kneeTracking: {
-      rawValue: Math.min(f.leftKneeDeviation, f.rightKneeDeviation),
-      displayValue: `L ${fmt(f.leftKneeDeviation, 3)} / R ${fmt(f.rightKneeDeviation, 3)}`,
-      label: 'Knee Tracking',
-      status:
-        f.leftKneeDeviation > 0.01 && f.rightKneeDeviation > 0.01 ? 'good'
-        : f.leftKneeDeviation > -0.015 && f.rightKneeDeviation > -0.015 ? 'warn'
-        : 'error',
-      feedback:
-        f.leftKneeDeviation > 0.01 && f.rightKneeDeviation > 0.01
-          ? 'Knees tracking outward correctly'
-          : f.leftKneeDeviation <= -0.015 && f.rightKneeDeviation <= -0.015
-          ? 'Both knees collapsing inward — push them out'
-          : f.leftKneeDeviation <= -0.015
-          ? 'Left knee collapsing inward — push it out'
-          : f.rightKneeDeviation <= -0.015
-          ? 'Right knee collapsing inward — push it out'
-          : 'Knees slightly narrow — open them wider',
-    },
+  rawValue: Math.min(f.leftKneeDeviation, f.rightKneeDeviation),
+  displayValue: `L ${fmt(f.leftKneeDeviation, 3)} / R ${fmt(f.rightKneeDeviation, 3)}`,
+  label: 'Knee Tracking',
+  status:
+    f.leftKneeDeviation > 0.01 && f.rightKneeDeviation > 0.01 ? 'good'
+    : f.leftKneeDeviation > -0.07 && f.rightKneeDeviation > -0.07 ? 'warn'
+    : 'error',
+  feedback:
+    f.leftKneeDeviation > 0.01 && f.rightKneeDeviation > 0.01
+      ? 'Knees tracking outward correctly'
+      : f.leftKneeDeviation > -0.07 && f.rightKneeDeviation > -0.07
+      ? 'Knees slightly inward — widen foot stance and rotate from the hip'
+      : f.leftKneeDeviation <= -0.07 && f.rightKneeDeviation <= -0.07
+      ? 'Both knees collapsing inward — widen foot placement first, then push knees out'
+      : f.leftKneeDeviation <= -0.07
+      ? 'Left knee collapsing inward — push it outward'
+      : 'Right knee collapsing inward — push it outward',
+},
 
     // ── Knee Symmetry ─────────────────────────────────────────────────────
     symmetry: {
