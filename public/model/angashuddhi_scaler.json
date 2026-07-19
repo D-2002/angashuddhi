@@ -1,0 +1,47 @@
+{
+  "feature_names": [
+    "left_knee_angle",
+    "right_knee_angle",
+    "avg_knee_angle",
+    "sitting_depth",
+    "torso_lean",
+    "left_knee_dev",
+    "right_knee_dev",
+    "knee_bend_delta",
+    "hip_level_delta",
+    "com_lateral_offset"
+  ],
+  "class_names": [
+    "correct",
+    "forward_lean",
+    "insufficient_depth",
+    "knee_collapse",
+    "left_knee_collapse",
+    "right_knee_collapse",
+    "weight_shift"
+  ],
+  "mean": [
+    127.60521441610564,
+    132.88187165394777,
+    130.24354308392168,
+    0.43048000246446133,
+    10.036476747719066,
+    -0.06954804662570785,
+    -0.06688705227003318,
+    11.312840234631768,
+    0.004485274932235028,
+    0.009456318747786147
+  ],
+  "std": [
+    16.835349999099208,
+    15.775500203762054,
+    14.94597396342816,
+    0.012253353738680207,
+    2.300100007760111,
+    0.027325766232430482,
+    0.02458967728597124,
+    8.421700390611287,
+    0.002772560062327413,
+    0.010420981166463438
+  ]
+}
