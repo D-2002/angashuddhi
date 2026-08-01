@@ -115,67 +115,51 @@ export interface TeacherFeedback {
 export async function getTeacherFeedback(
   req: TeacherFeedbackRequest,
 ): Promise<TeacherFeedback> {
-
-  const { reasoning, mlResult, conflict } = req;
+  const { reasoning } = req;
   const top   = reasoning.topError;
   const score = reasoning.overallScore;
 
-  const systemPrompt = `You are an experienced Bharatanatyam teacher who has been watching a student practice Aramandi. 
-You have just received a biomechanical analysis of their form. 
-Speak directly, warmly but honestly. Be specific — never generic. 
-Do not mention AI, software, sensors, or technology. 
-Respond as if you are speaking to the student face to face.`;
+  // Generate structured feedback from priority engine output
+  // No API call needed — pedagogical intelligence is already in the reasoning layer
+  return {
+    primaryCorrection: top?.staticPhrase
+      ?? 'Focus on keeping your knees outward and your back upright.',
+    whyItMatters: top?.reason
+      ?? 'These are the foundational elements of correct Aramandi.',
+    whatToDoNext: getNextStep(top?.errorKey),
+    sessionSummary: buildSummary(score, reasoning.sessionTrend, reasoning.allErrors.length),
+  };
+}
 
-  const userPrompt = `
-Student session analysis:
-- Overall score: ${score}/100
-- Session trend: ${reasoning.sessionTrend}
-- Session duration: ${Math.round(req.sessionDuration / 60)} minutes
-- Primary error detected: ${top ? `${top.errorKey} (${top.tier} priority)` : 'None — form looks correct'}
-- Root cause identified: ${top?.rootCause ?? 'N/A'}
-- This error is ${top?.isRecurring ? 'RECURRING throughout the session' : 'appearing occasionally'}
-- All errors found: ${reasoning.allErrors.map(e => e.errorKey).join(', ') || 'None'}
-- ML classifier verdict: ${mlResult.predictedClass} (${(mlResult.confidence * 100).toFixed(0)}% confidence)
-- System conflict: ${conflict.type}
+function getNextStep(errorKey: string | undefined): string {
+  const drills: Record<string, string> = {
+    kneeTracking:  'Practice slow Aramandi holds. Lower over 4 counts, hold for 4. If knees collapse at any point, come back up and restart. Quality over depth.',
+    torsoLean:     'Try wall-back Aramandi. Stand with your back touching the wall and lower into position without your shoulders leaving the wall.',
+    stability:     'Practice standing on one leg for 30 seconds each side to build balance, then return to Aramandi.',
+    sittingDepth:  'Hold a doorframe for support and lower to your maximum depth. Hold for 30 seconds. Gradually increase depth each session.',
+    hipLevel:      'Slow down and consciously level your hips as you descend. Use a mirror if available.',
+    symmetry:      'Isolate your weaker side. Practice single-leg Aramandi preparation to build even strength.',
+  };
+  return drills[errorKey ?? '']
+    ?? 'Practice slow Aramandi holds: 10 repetitions, 10 seconds each, focusing on the correction above.';
+}
 
-Please provide:
-1. PRIMARY CORRECTION: The single most important thing they must fix (1-2 sentences, very specific)
-2. WHY IT MATTERS: The pedagogical reason — what breaks in the technique if this isn't fixed (1 sentence)
-3. WHAT TO DO NEXT: A specific drill or instruction for their next practice (1-2 sentences)
-4. SESSION SUMMARY: A brief honest overall assessment of this session (1-2 sentences)
+function buildSummary(
+  score: number,
+  trend: string,
+  errorCount: number,
+): string {
+  const scoreText = score >= 80 ? 'Strong session'
+    : score >= 60 ? 'Decent session with room to improve'
+    : 'Session needs focused work';
 
-Format your response as JSON with keys: primaryCorrection, whyItMatters, whatToDoNext, sessionSummary
-Return ONLY valid JSON, no markdown, no preamble.
-  `.trim();
+  const trendText = trend === 'improving'    ? 'Your form improved as the session progressed.'
+    : trend === 'deteriorating' ? 'Form declined toward the end — consider rest or shorter sessions.'
+    : 'Consistent performance throughout.';
 
-  try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model:      'claude-sonnet-4-6',
-        max_tokens: 400,
-        system:     systemPrompt,
-        messages:   [{ role: 'user', content: userPrompt }],
-      }),
-    });
+  const errorText = errorCount === 0
+    ? 'No significant errors detected.'
+    : `${errorCount} error${errorCount > 1 ? 's' : ''} detected — focus on the primary correction first.`;
 
-    if (!response.ok) throw new Error(`API error: ${response.status}`);
-
-    const data  = await response.json();
-    const text  = data.content[0].text as string;
-    const clean = text.replace(/```json|```/g, '').trim();
-    return JSON.parse(clean) as TeacherFeedback;
-
-  } catch (err) {
-    console.error('[AngaShuddhi] Teacher feedback API failed:', err);
-
-    // Graceful fallback — static feedback if API unavailable
-    return {
-      primaryCorrection: top?.staticPhrase ?? 'Focus on keeping your knees outward and your back upright.',
-      whyItMatters:      top?.reason ?? 'These are the foundational elements of correct Aramandi.',
-      whatToDoNext:      'Practice slow Aramandi holds — lower over 4 counts, hold for 4. Quality over depth.',
-      sessionSummary:    `Score: ${score}/100. ${reasoning.sessionTrend === 'improving' ? 'You improved during this session.' : reasoning.sessionTrend === 'deteriorating' ? 'Your form declined — consider rest.' : 'Consistent performance throughout.'}`,
-    };
-  }
+  return `${scoreText}. ${trendText} ${errorText} Score: ${score}/100.`;
 }

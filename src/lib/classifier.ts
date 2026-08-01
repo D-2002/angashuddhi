@@ -187,7 +187,7 @@ const HEADLINES: Record<ClassName, string> = {
 
 const DETAILS: Record<ClassName, string> = {
   correct:
-    'Good posture — maintain this form and focus on holding stability.',
+    'Good posture. Maintain this form and focus on holding stability.',
   forward_lean:
     'Your torso is tilting forward. Lift your chest, engage your core, and keep your spine vertical over your hips.',
   insufficient_depth:
@@ -195,9 +195,9 @@ const DETAILS: Record<ClassName, string> = {
   knee_collapse:
     'Both knees are falling inward. Widen your foot stance first, then actively rotate your hips outward to push both knees out.',
   left_knee_collapse:
-    'Your left knee is falling inward. Push it outward — the rotation comes from your left hip, not just the knee.',
+    'Your left knee is falling inward. Push it outward. The rotation comes from your left hip, not just the knee.',
   right_knee_collapse:
-    'Your right knee is falling inward. Push it outward — the rotation comes from your right hip, not just the knee.',
+    'Your right knee is falling inward. Push it outward. The rotation comes from your right hip, not just the knee.',
   weight_shift:
     'Your weight is shifting sideways. Root both feet evenly into the floor and centre your hips over the midpoint.',
 };
