@@ -138,9 +138,9 @@ export async function classifyPose(
 
   // ── Parse label output ──────────────────────────────────────────────────
   // output_label: int64 tensor, shape [1]
-  const labelOutput = results['output_label'];
+  const labelOutput = results['label'];
   if (!labelOutput) {
-    console.error('[AngaShuddhi] output_label missing. Available:', Object.keys(results));
+    console.error('[AngaShuddhi] label missing. Available:', Object.keys(results));
     return null;
   }
   const predictedIdx   = Number(labelOutput.data[0]);
@@ -149,9 +149,10 @@ export async function classifyPose(
   // ── Parse probability output ────────────────────────────────────────────
   // With zipmap=False: output_probability is float32 tensor, shape [1, 7]
   // Data is a flat Float32Array: [p_class0, p_class1, ..., p_class6]
-  const probOutput = results['output_probability'];
+  
+  const probOutput = results['probabilities'];
   if (!probOutput) {
-    console.error('[AngaShuddhi] output_probability missing. Available:', Object.keys(results));
+    console.error('[AngaShuddhi] probabilities missing. Available:', Object.keys(results));
     return null;
   }
 
